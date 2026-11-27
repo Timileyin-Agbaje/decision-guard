@@ -126,13 +126,22 @@ function readPaths(fields: Fields, limits: ListLimits): Result<string[]> {
   return checkCount(normalizeList(normalized), "paths", limits.maxCount);
 }
 
+// Validates only the check_plan summary. The check log uses it for input that is not valid:
+// it stores the summary only if the summary is valid (PRD 10.2).
+export function validateSummary(input: unknown): Result<string> {
+  if (!isFields(input)) {
+    return { ok: false, reason: "The input must be an object." };
+  }
+  return readText(input, "summary", 500);
+}
+
 // Validates check_plan input (PRD 9.1).
 // Sequence: summary, terms, paths, issueKey, then "one or more terms or paths".
 export function validatePlan(input: unknown): Result<Plan> {
   if (!isFields(input)) {
     return { ok: false, reason: "The input must be an object." };
   }
-  const summary = readText(input, "summary", 500);
+  const summary = validateSummary(input);
   if (!summary.ok) {
     return summary;
   }
