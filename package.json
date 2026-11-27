@@ -11,5 +11,8 @@
     "@forge/react": "^12.0.0",
     "@forge/resolver": "^2.0.0",
     "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.9"
   }
 }
