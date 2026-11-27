@@ -3,7 +3,7 @@ modules:
     - key: decision-guard-mcp
       name: Decision Guard MCP
       tools:
-        - hello-world-logger
+        - check-plan
   rovo:agent:
     - key: decision-guard-hello-world-agent
       name: decision-guard
@@ -35,6 +35,40 @@ modules:
           required: true
           description: |
             "The message that the user has requested be logged to Forge logs"
+    - key: check-plan
+      name: "Decision Guard: check plan"
+      function: checkPlan
+      actionVerb: GET
+      description: >
+        Checks a coding plan against the team's decision records. Call it before
+        you write or change code. Send all technologies as terms and all changed
+        files as paths. Only the verdict CLEAR means that the plan can continue.
+      inputs:
+        summary:
+          title: Summary
+          type: string
+          required: true
+          description: One or two sentences that describe the plan. 1 to 500 characters.
+        terms:
+          title: Terms
+          type: string
+          required: false
+          description: >
+            Comma-separated technologies, libraries and services that the plan
+            adds, removes or changes, for example "redis, ioredis". Send terms,
+            paths or both.
+        paths:
+          title: Paths
+          type: string
+          required: false
+          description: >
+            Comma-separated file and folder paths that the plan changes, relative
+            to the repository root, for example "services/billing/app.ts, src/auth".
+        issueKey:
+          title: Issue key
+          type: string
+          required: false
+          description: The Jira issue key for the work, for example PROJ-42. Optional.
   jira:adminPage:
     - key: dg-admin
       resource: dg-admin/entry
@@ -47,6 +81,8 @@ modules:
       handler: index.messageLogger
     - key: resolver
       handler: dg-admin.handler
+    - key: checkPlan
+      handler: actions/check-plan.handler
 resources:
   - key: dg-admin
     path: src/frontend/dg-admin

@@ -3,7 +3,7 @@
 | Item | Value |
 |---|---|
 | Document | Decision Guard MVP product requirements |
-| Version | 0.4.2 (MVP, in build) |
+| Version | 0.4.3 (MVP, in build) |
 | Date | 27 Nov 2026 |
 | Writing standard | ASD-STE100 Simplified Technical English |
 | Hackathon | Codegeist 2026 |
@@ -15,6 +15,18 @@
 | Project tracking | Linear |
 | Code review | Greptile, on each pull request |
 | Replaces | Versions 0.2 and 0.3, and `spike-notes-2026-11-26.md` |
+
+### Changes from version 0.4.2
+
+Task B3 closed these gaps.
+
+- Each check writes one check log entry, for all four verdicts. Before, the procedure in section 9.1 stopped before the log step for `ERROR` and `NO_RECORDS` (sections 9.1 and 10.2).
+- `checkId` is `null` when the check log write fails (section 9.4).
+- A fixed reason for an internal failure (section 9.4).
+- The log entry for input that is not valid (section 10.2).
+- B3 removes `hello-world-logger` from the `rovo:mcp` tools only. B7 and B9 remove the rest (section 17).
+- `tsconfig.json` must not set `noEmit`. The Forge bundler uses `tsconfig.json` (F22).
+- Action descriptions: 255 characters maximum (F23).
 
 ### Changes from version 0.4.1
 
@@ -290,13 +302,15 @@ Validation rules:
 
 Procedure:
 
-1. Validate all inputs. If one input is not valid, return `ERROR`. Do not do step 2.
+1. Validate all inputs. If one input is not valid, the verdict is `ERROR`. Go to step 6.
 2. Read the active decision records.
-3. If there are no active decision records, return `NO_RECORDS`.
+3. If there are no active decision records, the verdict is `NO_RECORDS`. Go to step 6.
 4. Normalize the plan (section 8.2).
 5. Compare the plan with each active decision record (sections 8.3 and 8.4).
-6. Write the check log entry (section 10.2).
+6. Write the check log entry (section 10.2). Do this for all verdicts.
 7. Return the result (section 9.4).
+
+If a failure occurs in steps 2 to 5, the verdict is `ERROR` (HR-1). Do step 6.
 
 ### 9.2 Tool `list_decisions`
 
@@ -391,6 +405,8 @@ Field rules:
 | `nextStep` | Always present. Use only the fixed texts in the table below. |
 | `error` | Present only for `ERROR`. Format: `{ "reason": "<short reason>" }`. No stack trace. |
 | `log` | `OK`, or `FAILED` if the log write failed (HR-7). |
+| `checkId` | The ID of the check log entry. `null` if the log write failed (`log` is `FAILED`). |
+| `error.reason` | For input that is not valid: the validation reason (section 9.1). For an internal failure: always "Internal error. The plan was not checked." Write the details to the Forge logs only. |
 
 `nextStep` for each verdict:
 
@@ -439,9 +455,9 @@ Admin input (create and edit):
 |---|---|---|
 | `id` | string | `CHK-` followed by the date and 4 random characters, for example `CHK-20261127-a1b2` |
 | `issueKey` | string | Optional |
-| `invokedBy` | account ID | The user for whom the agent works |
-| `summary` | string | The plan summary |
-| `plan` | object | The normalized terms and paths |
+| `invokedBy` | account ID | The user for whom the agent works. From `context.principal.accountId` (second argument of the handler). `unknown` if the context does not contain it. |
+| `summary` | string | The plan summary. For input that is not valid: the summary if the summary is valid, otherwise `""`. |
+| `plan` | object | The normalized terms and paths. For input that is not valid: empty lists. Do not store input that is not valid. |
 | `verdict` | enum | `CONFLICT`, `CLEAR`, `NO_RECORDS` or `ERROR` |
 | `matches` | list | Decision record ID and version for each match |
 | `createdAt` | timestamp | ISO 8601 string |
@@ -688,6 +704,8 @@ Use end-to-end tests only. Each test uses the installed app.
 | F19 | Query results are sorted by key, in lexicographic order. Thus `DG-10` comes before `DG-2`. Sort decision records in code. |
 | F20 | `kvs.query()` is eventually consistent. `kvs.get()` is strictly consistent. |
 | F21 | Keys: maximum 500 characters; regex `/^(?!\s+$)[a-zA-Z0-9:._\s-#]+$/`. Values: maximum 240 KiB. `keyPolicy: 'FAIL_IF_EXISTS'` does not overwrite a key that exists. The documentation does not give the error for this case. |
+| F22 | The Forge bundler compiles TypeScript with `tsconfig.json`. If `tsconfig.json` sets `noEmit: true`, `forge deploy` fails with "TypeScript emitted no output". Give `--noEmit` only on the command line (`npx tsc --noEmit`). |
+| F23 | An action `description` can have 255 characters maximum (`forge lint`). A handler path into a subfolder of `src`, for example `actions/check-plan.handler`, works. |
 
 ## 16 Decision gate
 
@@ -712,7 +730,7 @@ Do the tasks in this sequence. Each task has one result that you can see. A task
 | B0 | Change the project to TypeScript. Add `typescript` and a `tsconfig.json` with `strict: true`. Add the `Result` type in `src/core/result.ts`. Do not convert the spike files. | 15.3 | None | `npx tsc --noEmit` passes. `forge deploy` passes. The S4 tool call still works. |
 | B1 | Make the shared code in `src/core/`: normalization, validation and the match rules. No Forge imports. | 8, 9.1, 10.1, 11 (HR-3, HR-4) | B0 | `npx tsc --noEmit` passes. B3 proves that the rules work with `docs/m1-cases.md`. |
 | B2 | Make the storage code for decision records and check log entries. | 10.1, 10.2, 10.3 | B1 | The code exists. B5 and B3 prove that it works. |
-| B3 | Replace the `hello-world-logger` action with the `check-plan` action. Connect it to the `rovo:mcp` module. | 9.1, 9.4, 11 | B1, B2 | Claude Code calls the tool. A plan with no records gives `NO_RECORDS`. |
+| B3 | Replace the `hello-world-logger` action with the `check-plan` action in the `rovo:mcp` tools. Connect it to the `rovo:mcp` module. B7 changes the agent, and B9 removes the `hello-world-logger` action module. | 9.1, 9.4, 11 | B1, B2 | Claude Code calls the tool. A plan with no records gives `NO_RECORDS`. |
 | B4 | Add the `list-decisions` action. Connect it to the `rovo:mcp` module. | 9.2, 9.4 | B2 | Claude Code calls the tool and gets a valid JSON result. |
 | B5 | Replace the S4 test admin page with the decision record page: create, edit, retire, list. Add the backend admin check. | 10.4, 11 (HR-5) | B1, B2 | An admin makes a decision record. E1, E6 and E8 pass. |
 | B6 | Add the last 50 check log entries to the admin page. | 10.2, 10.4 | B3, B5 | The page shows the entry from the last Claude Code check. |
