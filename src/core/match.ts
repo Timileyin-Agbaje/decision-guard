@@ -1,5 +1,6 @@
 // Match rules and verdicts from PRD sections 8.3 to 8.5.
 
+import { compareDecisionIds } from "./ids";
 import type { DecisionRecord, Match, MatchItem, MatchResult, Plan } from "./types";
 
 // Plain comparison of UTF-16 code units. Do not use localeCompare: its result depends on
@@ -22,21 +23,6 @@ function compareMatchItems(a: MatchItem, b: MatchItem): number {
     return a.type === "term" ? -1 : 1;
   }
   return compareText(a.value, b.value);
-}
-
-// The number in "DG-<number>". An ID without that form sorts last.
-function idNumber(id: string): number {
-  const found = /^DG-(\d+)$/.exec(id);
-  return found ? Number(found[1]) : Number.POSITIVE_INFINITY;
-}
-
-// By ID number, ascending: DG-2 before DG-10. Same number: by ID text, so the order is fixed.
-function compareMatches(a: Match, b: Match): number {
-  const byNumber = idNumber(a.decisionId) - idNumber(b.decisionId);
-  if (byNumber !== 0 && !Number.isNaN(byNumber)) {
-    return byNumber;
-  }
-  return compareText(a.decisionId, b.decisionId);
 }
 
 // Compares a validated (normalized) plan with the decision records.
@@ -69,6 +55,6 @@ export function matchPlan(plan: Plan, records: readonly DecisionRecord[]): Match
       });
     }
   }
-  matches.sort(compareMatches);
+  matches.sort((a, b) => compareDecisionIds(a.decisionId, b.decisionId));
   return { verdict: matches.length > 0 ? "CONFLICT" : "CLEAR", matches };
 }
