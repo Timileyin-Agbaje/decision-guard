@@ -536,7 +536,8 @@ The page must let an admin:
 
 The page must apply the validation rules of section 10.1. It must show an error message next to each field that is not valid.
 
-- The resolver validates all fields and returns one error for each field that is not valid. The rule "one or more terms or paths" shows at the `terms` field.
+- The resolver validates all fields and returns one error for each field that is not valid. The rule "one or more terms or paths" shows at the `terms` field, also when other fields are not valid. Thus an empty form shows all its errors at one time.
+- If a request from the page fails, the page shows an error and the buttons work again. After a failed retire, the error stays on the page.
 - The page shows retired decision records with the status "Retired" and no actions.
 - Before you retire a decision record, the page asks for confirmation.
 

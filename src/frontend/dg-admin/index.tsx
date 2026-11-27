@@ -36,11 +36,19 @@ type Editor = { id?: string; form: DecisionForm };
 
 const EMPTY_FORM: DecisionForm = { title: "", statement: "", terms: "", paths: "", sourceUrl: "" };
 
-// Calls a resolver function. invoke can return the body inside { body, metadata } when metadata
-// is requested; this page does not request it, but handle both forms.
+const REQUEST_FAILED = "The request failed. Check your connection, then try again.";
+
+// Calls a resolver function. It never rejects: a failed request gives { ok: false }, so the
+// page can always show an error and recover. invoke can return the body inside
+// { body, metadata } when metadata is requested; this page does not request it, but handle both.
 async function call<T>(name: string, payload?: Record<string, string>): Promise<AdminResponse<T>> {
-  const response = await invoke<AdminResponse<T>>(name, payload);
-  return "body" in response ? response.body : response;
+  try {
+    const response = await invoke<AdminResponse<T>>(name, payload);
+    return "body" in response ? response.body : response;
+  } catch (error: unknown) {
+    console.error(`Request ${name} failed.`, error);
+    return { ok: false, reason: REQUEST_FAILED };
+  }
 }
 
 function formFor(record: DecisionRecord): DecisionForm {
@@ -92,11 +100,15 @@ const App = (): React.JSX.Element => {
       return;
     }
     setBusy(true);
-    const result =
-      editor.id === undefined
-        ? await call<DecisionRecord>("createDecision", editor.form)
-        : await call<DecisionRecord>("updateDecision", { id: editor.id, ...editor.form });
-    setBusy(false);
+    let result: AdminResponse<DecisionRecord>;
+    try {
+      result =
+        editor.id === undefined
+          ? await call<DecisionRecord>("createDecision", editor.form)
+          : await call<DecisionRecord>("updateDecision", { id: editor.id, ...editor.form });
+    } finally {
+      setBusy(false);
+    }
     if (result.ok) {
       setEditor(undefined);
       await load();
@@ -111,11 +123,17 @@ const App = (): React.JSX.Element => {
       return;
     }
     setBusy(true);
-    const result = await call<DecisionRecord>("retireDecision", { id: retiring.id });
-    setBusy(false);
+    let result: AdminResponse<DecisionRecord>;
+    try {
+      result = await call<DecisionRecord>("retireDecision", { id: retiring.id });
+    } finally {
+      setBusy(false);
+    }
     setRetiring(undefined);
     if (!result.ok) {
+      // Do not reload: a reload clears the message, and the record did not change.
       setPageError(result.reason);
+      return;
     }
     await load();
   };
