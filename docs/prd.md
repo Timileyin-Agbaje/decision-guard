@@ -22,7 +22,7 @@ Task B2 closed these storage gaps.
 
 - Decision record IDs: the highest existing number + 1, written with `FAIL_IF_EXISTS` (section 10.3).
 - A retired decision record cannot be edited or retired again (section 10.3).
-- When two admins change the same decision record at the same time, only one change is written. The other admin gets an error. A failed change blocks the record for 20 minutes or less (section 10.3).
+- Known MVP limit: when two admins change the same decision record at the same moment, the last write wins (section 10.3).
 - A stored value with a bad shape causes an error, not `CLEAR` (section 10.3).
 - Check log entry ID: the date is in UTC. The 4 random characters are from `a` to `z` and `0` to `9` (section 10.2).
 - Old check log entries are removed after each write. A new entry never replaces an entry with the same ID (section 10.2).
@@ -461,15 +461,10 @@ Keep the last 50 check log entries. Delete older entries.
 - Store each check log entry under its own key.
 - Use key prefixes, for example `decision:` and `check:`.
 - Keys: `decision:<id>`, for example `decision:DG-3`, and `check:<id>`, for example `check:CHK-20261127-a1b2`.
-- Version claim keys: `decision:v:<id>:<version>`, for example `decision:v:DG-3:2`. A list of decision records reads only keys that start with `decision:DG-`. Thus the claim keys do not make a check slower.
 - All `@forge/kvs` access is in `src/storage/`. Read all keys with one prefix page by page, with 50 items for each page (F18).
 - New decision record ID: the highest existing ID number + 1. Write the record with `keyPolicy: 'FAIL_IF_EXISTS'`. If the ID exists, try the next number, up to 5 times. Decision records are never deleted, so an ID is never used again.
 - Edit and retire: add 1 to `version`. Set `updatedBy` and `updatedAt`. A retired decision record cannot be edited or retired again.
-- Before an edit or retire writes version N, claim the key `decision:v:<id>:<N>` with `keyPolicy: 'FAIL_IF_EXISTS'`. Only one write can claim a version. If the claim fails, write nothing and return the error "Decision record <id> was changed by another admin. Load it again, then try again." Thus two admins cannot both write version N, and an edit cannot undo a retire.
-- A failure at any step can leave a claim with no record write. Such a claim is stale when it is older than 20 minutes and the record still has the old version. The longest Forge function timeout is 15 minutes, so the write of a stale claim cannot be in progress.
-- To take over a stale claim, first claim the key `decision:v:<id>:<N>:<token of the stale claim>` with `FAIL_IF_EXISTS`. Only one write can take over a stale claim. Then replace the stale claim with the new claim. Thus a failure blocks changes to one decision record for 20 minutes or less.
-- If the record write fails, and a strictly consistent read shows the old version, delete the claim. Then a new edit can start at once.
-- Do not delete claim keys after a successful write. An admin who read the old version must still find the claim.
+- **Known MVP limit:** edit and retire read the decision record, then write it. If two admins change the same decision record at the same moment, the last write wins. Then an edit can undo a retire, and two writes can have the same `version`. Reason: plain `@forge/kvs` keys have no conditional write ("write only if `version` is still N"). Lock keys made with `FAIL_IF_EXISTS` can stay locked after a failure (PR #3 review). Only admins write decision records, so the risk is low for the MVP. After the MVP, use Forge Custom Entities with `kvs.transact()` conditions.
 - To confirm that a `FAIL_IF_EXISTS` write was this write, compare the stored value with all fields of the written value (F21).
 - Check the shape of each stored value when you read it. If the shape is not correct, cause an error. A check then gives `ERROR`, not `CLEAR` (HR-1).
 
