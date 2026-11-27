@@ -170,47 +170,85 @@ export function validatePlan(input: unknown): Result<Plan> {
   return { ok: true, value: plan };
 }
 
-// Validates admin input for a decision record (PRD 10.1).
-// Sequence: title, statement, terms, paths, sourceUrl, then "one or more terms or paths".
-// Terms and paths are comma-separated strings, the same as in check_plan.
-export function validateDecisionInput(input: unknown): Result<DecisionInput> {
+export type DecisionField = "title" | "statement" | "terms" | "paths" | "sourceUrl";
+
+const DECISION_FIELDS: readonly DecisionField[] = ["title", "statement", "terms", "paths", "sourceUrl"];
+
+const NO_TERMS_OR_PATHS = "A decision record must have one or more terms or paths.";
+
+// Errors for each field that is not valid. The admin page shows each error next to its field
+// (PRD 10.4). The rule "one or more terms or paths" is shown at terms.
+export type DecisionFieldsResult =
+  | { ok: true; value: DecisionInput }
+  | { ok: false; errors: Partial<Record<DecisionField, string>> };
+
+type DecisionCheck = {
+  // Errors of the fields themselves, in field order.
+  fieldErrors: Partial<Record<DecisionField, string>>;
+  // The rule "one or more terms or paths". Checked when terms and paths are both valid,
+  // also when other fields are not valid.
+  ruleError?: string;
+  value?: DecisionInput;
+};
+
+function checkDecision(input: unknown): DecisionCheck {
   if (!isFields(input)) {
-    return { ok: false, reason: "The input must be an object." };
+    return { fieldErrors: { title: "The input must be an object." } };
   }
   const title = readText(input, "title", 80);
-  if (!title.ok) {
-    return title;
-  }
   const statement = readText(input, "statement", 500);
-  if (!statement.ok) {
-    return statement;
-  }
   const terms = readTerms(input, { maxItemLength: 40, maxCount: 20 });
-  if (!terms.ok) {
-    return terms;
-  }
   const paths = readPaths(input, { maxItemLength: 200, maxCount: 10 });
-  if (!paths.ok) {
-    return paths;
+  let sourceUrl = readOptionalString(input, "sourceUrl");
+  if (sourceUrl.ok && sourceUrl.value !== undefined && !sourceUrl.value.startsWith("https://")) {
+    sourceUrl = { ok: false, reason: "sourceUrl must start with https://." };
   }
-  const sourceUrl = readOptionalString(input, "sourceUrl");
-  if (!sourceUrl.ok) {
-    return sourceUrl;
+  const fieldErrors: Partial<Record<DecisionField, string>> = {};
+  const results = { title, statement, terms, paths, sourceUrl };
+  for (const field of DECISION_FIELDS) {
+    const result = results[field];
+    if (!result.ok) {
+      fieldErrors[field] = result.reason;
+    }
   }
-  if (sourceUrl.value !== undefined && !sourceUrl.value.startsWith("https://")) {
-    return { ok: false, reason: "sourceUrl must start with https://." };
+  const check: DecisionCheck = { fieldErrors };
+  if (terms.ok && paths.ok && terms.value.length === 0 && paths.value.length === 0) {
+    check.ruleError = NO_TERMS_OR_PATHS;
   }
-  if (terms.value.length === 0 && paths.value.length === 0) {
-    return { ok: false, reason: "A decision record must have one or more terms or paths." };
+  if (title.ok && statement.ok && terms.ok && paths.ok && sourceUrl.ok && check.ruleError === undefined) {
+    check.value = { title: title.value, statement: statement.value, terms: terms.value, paths: paths.value };
+    if (sourceUrl.value !== undefined) {
+      check.value.sourceUrl = sourceUrl.value;
+    }
   }
-  const decision: DecisionInput = {
-    title: title.value,
-    statement: statement.value,
-    terms: terms.value,
-    paths: paths.value,
-  };
-  if (sourceUrl.value !== undefined) {
-    decision.sourceUrl = sourceUrl.value;
+  return check;
+}
+
+// Validates admin input for a decision record (PRD 10.1). Returns the errors of all fields.
+// Terms and paths are comma-separated strings, the same as in check_plan.
+export function validateDecisionFields(input: unknown): DecisionFieldsResult {
+  const check = checkDecision(input);
+  if (check.value !== undefined) {
+    return { ok: true, value: check.value };
   }
-  return { ok: true, value: decision };
+  const errors = { ...check.fieldErrors };
+  if (check.ruleError !== undefined) {
+    // terms itself is valid here, so this does not replace a terms error.
+    errors.terms = check.ruleError;
+  }
+  return { ok: false, errors };
+}
+
+// Validates admin input for a decision record and returns only the first error.
+// Sequence: title, statement, terms, paths, sourceUrl, then "one or more terms or paths".
+export function validateDecisionInput(input: unknown): Result<DecisionInput> {
+  const check = checkDecision(input);
+  if (check.value !== undefined) {
+    return { ok: true, value: check.value };
+  }
+  const first = DECISION_FIELDS.find((field) => check.fieldErrors[field] !== undefined);
+  if (first !== undefined) {
+    return { ok: false, reason: check.fieldErrors[first] ?? "The input is not valid." };
+  }
+  return { ok: false, reason: check.ruleError ?? "The input is not valid." };
 }
