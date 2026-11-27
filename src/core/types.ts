@@ -45,6 +45,23 @@ export type Match = {
 
 export type Verdict = "CONFLICT" | "CLEAR" | "NO_RECORDS" | "ERROR";
 
+// One check log entry (PRD 10.2).
+export type CheckLogEntry = {
+  // "CHK-" + UTC date (YYYYMMDD) + "-" + 4 random characters, for example CHK-20261127-a1b2.
+  id: string;
+  issueKey?: string;
+  // Account ID of the user for whom the agent works.
+  invokedBy: string;
+  summary: string;
+  // The normalized terms and paths.
+  plan: { terms: string[]; paths: string[] };
+  verdict: Verdict;
+  // Decision record ID and version for each match.
+  matches: { decisionId: string; decisionVersion: number }[];
+  // ISO 8601 timestamp.
+  createdAt: string;
+};
+
 // matchPlan never gives ERROR. The caller gives ERROR for bad input or an internal failure.
 export type MatchResult = {
   verdict: Exclude<Verdict, "ERROR">;

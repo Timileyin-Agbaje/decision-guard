@@ -3,7 +3,7 @@
 | Item | Value |
 |---|---|
 | Document | Decision Guard MVP product requirements |
-| Version | 0.4.1 (MVP, in build) |
+| Version | 0.4.2 (MVP, in build) |
 | Date | 27 Nov 2026 |
 | Writing standard | ASD-STE100 Simplified Technical English |
 | Hackathon | Codegeist 2026 |
@@ -15,6 +15,18 @@
 | Project tracking | Linear |
 | Code review | Greptile, on each pull request |
 | Replaces | Versions 0.2 and 0.3, and `spike-notes-2026-11-26.md` |
+
+### Changes from version 0.4.1
+
+Task B2 closed these storage gaps.
+
+- Decision record IDs: the highest existing number + 1, written with `FAIL_IF_EXISTS` (section 10.3).
+- A retired decision record cannot be edited or retired again (section 10.3).
+- When two admins edit the same decision record at the same time, the last write wins (section 10.3).
+- A stored value with a bad shape causes an error, not `CLEAR` (section 10.3).
+- Check log entry ID: the date is in UTC. The 4 random characters are from `a` to `z` and `0` to `9` (section 10.2).
+- Old check log entries are removed after each write (section 10.2).
+- Platform facts for `@forge/kvs`, from the Forge documentation (section 15.4, F18 to F21).
 
 ### Changes from version 0.4
 
@@ -432,9 +444,14 @@ Admin input (create and edit):
 | `plan` | object | The normalized terms and paths |
 | `verdict` | enum | `CONFLICT`, `CLEAR`, `NO_RECORDS` or `ERROR` |
 | `matches` | list | Decision record ID and version for each match |
-| `createdAt` | timestamp | |
+| `createdAt` | timestamp | ISO 8601 string |
 
 Keep the last 50 check log entries. Delete older entries.
+
+- The date in `id` is the UTC date of `createdAt`. The 4 random characters are from `a` to `z` and `0` to `9`.
+- After each write, delete all entries except the newest 50. Newest means the latest `createdAt`; for the same `createdAt`, the highest `id`.
+- If the delete fails, the entry is still written. Do not set `log` to `FAILED` (HR-7 is about the write only).
+- The query is eventually consistent (F20). Thus, for a short time, there can be more than 50 entries. The next write removes them.
 
 ### 10.3 Storage
 
@@ -442,6 +459,12 @@ Keep the last 50 check log entries. Delete older entries.
 - Store each decision record under its own key.
 - Store each check log entry under its own key.
 - Use key prefixes, for example `decision:` and `check:`.
+- Keys: `decision:<id>`, for example `decision:DG-3`, and `check:<id>`, for example `check:CHK-20261127-a1b2`.
+- All `@forge/kvs` access is in `src/storage/`. Read all keys with one prefix page by page, with 50 items for each page (F18).
+- New decision record ID: the highest existing ID number + 1. Write the record with `keyPolicy: 'FAIL_IF_EXISTS'`. If the ID exists, try the next number, up to 5 times. Decision records are never deleted, so an ID is never used again.
+- Edit and retire: add 1 to `version`. Set `updatedBy` and `updatedAt`. A retired decision record cannot be edited or retired again.
+- If two admins edit the same decision record at the same time, the last write wins. Each write still adds 1 to `version`.
+- Check the shape of each stored value when you read it. If the shape is not correct, cause an error. A check then gives `ERROR`, not `CLEAR` (HR-1).
 
 **NOTE:** Verify the query and limit functions of `@forge/kvs` in the Forge documentation before you write the storage code.
 
@@ -659,6 +682,10 @@ Use end-to-end tests only. Each test uses the installed app.
 | F15 | A scope change needs `forge deploy --approve MAJOR_VERSION_RULE`, then an install upgrade. |
 | F16 | The old URL `/plugins/servlet/upm` now goes to Atlassian Administration. Use the admin page URL in section 15.2. |
 | F17 | The app shows the **Runs on Atlassian** badge in Connected apps. |
+| F18 | `kvs.query()` returns 10 items by default and 100 maximum for each page. Use `nextCursor` for the next page. One error code says the limit must be "below 100". |
+| F19 | Query results are sorted by key, in lexicographic order. Thus `DG-10` comes before `DG-2`. Sort decision records in code. |
+| F20 | `kvs.query()` is eventually consistent. `kvs.get()` is strictly consistent. |
+| F21 | Keys: maximum 500 characters; regex `/^(?!\s+$)[a-zA-Z0-9:._\s-#]+$/`. Values: maximum 240 KiB. `keyPolicy: 'FAIL_IF_EXISTS'` does not overwrite a key that exists. The documentation does not give the error for this case. |
 
 ## 16 Decision gate
 
