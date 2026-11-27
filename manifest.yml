@@ -89,7 +89,7 @@ modules:
     - key: messageLogger
       handler: index.messageLogger
     - key: resolver
-      handler: dg-admin.handler
+      handler: admin/resolver.handler
     - key: checkPlan
       handler: actions/check-plan.handler
     - key: listDecisions
@@ -98,7 +98,7 @@ resources:
   - key: dg-admin
     path: src/frontend/dg-admin
     entry:
-      entry: dg-admin.jsx
+      entry: index.tsx
 app:
   rovo:
     tag: decguard
@@ -116,3 +116,4 @@ app:
 permissions:
   scopes:
     - storage:app
+    - read:permission:jira

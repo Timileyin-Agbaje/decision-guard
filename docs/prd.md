@@ -3,7 +3,7 @@
 | Item | Value |
 |---|---|
 | Document | Decision Guard MVP product requirements |
-| Version | 0.4.4 (MVP, in build) |
+| Version | 0.4.5 (MVP, in build) |
 | Date | 27 Nov 2026 |
 | Writing standard | ASD-STE100 Simplified Technical English |
 | Hackathon | Codegeist 2026 |
@@ -15,6 +15,16 @@
 | Project tracking | Linear |
 | Code review | Greptile, on each pull request |
 | Replaces | Versions 0.2 and 0.3, and `spike-notes-2026-11-26.md` |
+
+### Changes from version 0.4.4
+
+Task B5 closed these gaps.
+
+- The backend admin check: method, endpoint and scope (sections 10.4, 11 and 15.2).
+- New scope `read:permission:jira`. It causes a major version (F25).
+- The admin page shows an error next to each field that is not valid. The resolver checks all fields (section 10.4).
+- All admin page functions, also the list, need a Jira admin (section 10.4).
+- Test E8 needs a user who is not an admin. B10 does E8 (section 17).
 
 ### Changes from version 0.4.3
 
@@ -526,6 +536,18 @@ The page must let an admin:
 
 The page must apply the validation rules of section 10.1. It must show an error message next to each field that is not valid.
 
+- The resolver validates all fields and returns one error for each field that is not valid. The rule "one or more terms or paths" shows at the `terms` field.
+- The page shows retired decision records with the status "Retired" and no actions.
+- Before you retire a decision record, the page asks for confirmation.
+
+Admin check (HR-5):
+
+- Each resolver function, also the list, first checks that the user is a Jira admin. The page does not do this check.
+- Method: `` asUser().requestJira(route`/rest/api/3/mypermissions?permissions=ADMINISTER`) `` from `@forge/api`. The user is an admin only if the response is `{"permissions":{"ADMINISTER":{"havePermission":true}}}`.
+- Jira checks the user who makes the request (`asUser`). Thus the result does not use data from the page.
+- If the request fails, or the response has a different shape, the user is not an admin (fail closed).
+- The `jira:adminPage` module does not limit who can open the page. It only adds an item to the Jira admin navigation (F26).
+
 Use Atlassian UI Kit components only. Reason: a native look helps the Design score.
 
 ## 11 Hardening requirements
@@ -544,6 +566,8 @@ Use Atlassian UI Kit components only. Reason: a native look helps the Design sco
 - Only admins can create, edit or retire decision records. Do this check in the backend resolver. Do not rely on the user interface only.
 
 **NOTE:** Find the correct method and scope to check for Jira admin permission in the Forge documentation before you write this check. Record the scope in section 15.
+
+The method is in section 10.4. The scope is `read:permission:jira` (section 15.2).
 
 **HR-6 Instruction injection.** Decision text goes to agents. A person can try to put instructions in a decision record. To decrease this risk:
 
@@ -682,7 +706,7 @@ Use end-to-end tests only. Each test uses the installed app.
 | Development environment ID | `8569fc95-4b44-4078-83f7-8cba4e91e7a0` |
 | Admin page URL | `https://one-atlas-qiuq.atlassian.net/jira/settings/apps/56208479-cbf9-4775-82f5-1c1af8f04120/8569fc95-4b44-4078-83f7-8cba4e91e7a0` |
 | MCP endpoint | `https://mcp.atlassian.com/forge/56208479-cbf9-4775-82f5-1c1af8f04120` |
-| Scopes | `storage:app` |
+| Scopes | `storage:app`, `read:permission:jira` (admin check, HR-5) |
 
 ### 15.3 Commands
 
@@ -728,6 +752,8 @@ Use end-to-end tests only. Each test uses the installed app.
 | F22 | The Forge bundler compiles TypeScript with `tsconfig.json`. If `tsconfig.json` sets `noEmit: true`, `forge deploy` fails with "TypeScript emitted no output". Give `--noEmit` only on the command line (`npx tsc --noEmit`). |
 | F23 | An action `description` can have 255 characters maximum (`forge lint`). A handler path into a subfolder of `src`, for example `actions/check-plan.handler`, works. |
 | F24 | An action with no `inputs` is valid (`forge lint` and `forge deploy`, for `list-decisions`). |
+| F25 | `GET /rest/api/3/mypermissions` needs the scope `read:jira-work` (classic) or `read:permission:jira` (granular, "Beta" in the Jira REST API specification). `forge lint` accepts `read:permission:jira`. A new scope causes a major version: `forge lint` shows the approval `MAJOR_VERSION_RULE`. |
+| F26 | The `jira:adminPage` module does not limit who can open the page. A resolver must do its own permission check. |
 
 ## 16 Decision gate
 
@@ -754,7 +780,7 @@ Do the tasks in this sequence. Each task has one result that you can see. A task
 | B2 | Make the storage code for decision records and check log entries. | 10.1, 10.2, 10.3 | B1 | The code exists. B5 and B3 prove that it works. |
 | B3 | Replace the `hello-world-logger` action with the `check-plan` action in the `rovo:mcp` tools. Connect it to the `rovo:mcp` module. B7 changes the agent, and B9 removes the `hello-world-logger` action module. | 9.1, 9.4, 11 | B1, B2 | Claude Code calls the tool. A plan with no records gives `NO_RECORDS`. |
 | B4 | Add the `list-decisions` action. Connect it to the `rovo:mcp` module. | 9.2, 9.4 | B2 | Claude Code calls the tool and gets a valid JSON result. |
-| B5 | Replace the S4 test admin page with the decision record page: create, edit, retire, list. Add the backend admin check. | 10.4, 11 (HR-5) | B1, B2 | An admin makes a decision record. E1, E6 and E8 pass. |
+| B5 | Replace the S4 test admin page with the decision record page: create, edit, retire, list. Add the backend admin check. | 10.4, 11 (HR-5) | B1, B2 | An admin makes a decision record. E1 and E6 pass. E8 needs a user who is not an admin: B10 does E8. |
 | B6 | Add the last 50 check log entries to the admin page. | 10.2, 10.4 | B3, B5 | The page shows the entry from the last Claude Code check. |
 | B7 | Replace the template agent with the Decision Guard agent. | 9.3 | B3, B4 | E11 passes. |
 | B8 | Write `skill.md`. | 12 | B3, B4 | Claude Code follows it in a test task (start of M2). |
