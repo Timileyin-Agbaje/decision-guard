@@ -35,13 +35,28 @@ modules:
           required: true
           description: |
             "The message that the user has requested be logged to Forge logs"
+  jira:adminPage:
+    - key: dg-admin
+      resource: dg-admin/entry
+      resolver:
+        function: resolver
+      render: native
+      title: Decision Guard
   function:
     - key: messageLogger
       handler: index.messageLogger
+    - key: resolver
+      handler: dg-admin.handler
+resources:
+  - key: dg-admin
+    path: src/frontend/dg-admin
+    entry:
+      entry: dg-admin.jsx
 app:
   rovo:
     tag: decguard
-    description: Checks coding agent plans against team decisions and returns cited conflicts
+    description: Checks coding agent plans against team decisions and returns cited
+      conflicts
     keywords:
       - decisions
       - agent-guardrails
@@ -51,3 +66,6 @@ app:
     memoryMB: 256
     architecture: arm64
   id: ari:cloud:ecosystem::app/56208479-cbf9-4775-82f5-1c1af8f04120
+permissions:
+  scopes:
+    - storage:app

@@ -4,5 +4,12 @@
   "description": "a sample forge app with rovo-agent module",
   "main": "index.js",
   "private": true,
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@forge/bridge": "^7.0.0",
+    "@forge/kvs": "^2.1.3",
+    "@forge/react": "^12.0.0",
+    "@forge/resolver": "^2.0.0",
+    "react": "^18.2.0"
+  }
 }
