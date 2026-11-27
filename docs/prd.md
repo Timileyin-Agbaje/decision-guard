@@ -3,7 +3,7 @@
 | Item | Value |
 |---|---|
 | Document | Decision Guard MVP product requirements |
-| Version | 0.4 (MVP, before build) |
+| Version | 0.4.1 (MVP, in build) |
 | Date | 27 Nov 2026 |
 | Writing standard | ASD-STE100 Simplified Technical English |
 | Hackathon | Codegeist 2026 |
@@ -15,6 +15,18 @@
 | Project tracking | Linear |
 | Code review | Greptile, on each pull request |
 | Replaces | Versions 0.2 and 0.3, and `spike-notes-2026-11-26.md` |
+
+### Changes from version 0.4
+
+Task B1 closed these validation gaps. The match rules did not change.
+
+- Optional inputs: a missing value, `null` and `""` mean "not supplied" (section 9.1).
+- Text fields: remove spaces at the start and end before the length check. Store the result (sections 9.1 and 10.1).
+- Error sequence inside the `terms` and `paths` inputs (section 9.1).
+- The relative path check occurs before normalization removes a `/` at the end (section 9.1).
+- Character count is the JavaScript string length (section 9.1).
+- New: admin input for a decision record, its error sequence and its raw length rule (section 10.1).
+- `updatedAt` is an ISO 8601 string (section 10.1).
 
 ### Changes from version 0.3
 
@@ -255,6 +267,14 @@ Validation rules:
 - A path must be relative to the repository root. If a path starts with `/`, `~` or a drive letter (for example `C:`), return `ERROR` with the reason "Paths must be relative to the repository root." (G2)
 - If a path contains a `..` segment, return `ERROR` with the reason "Paths must not contain '..'." (G3)
 - Return only the first error. Check in this sequence: `summary`, `terms`, `paths`, `issueKey`, then the rule "one or more terms or paths". Thus the same bad input always gives the same error (HR-4).
+- If the input is not an object, return `ERROR` before the `summary` check.
+- For `terms`, check in this sequence: type, raw string length, the length of each term, then the count after duplicates are removed.
+- For `paths`, check in this sequence: type, raw string length, then each path in input order (relative, then `..`, then length), then the count after duplicates are removed.
+- Do the relative path check on each item after NFC normalization, removal of spaces at the ends, and the change of `\` to `/`. Do the check before normalization removes a `/` at the end. Thus the input `/` gives `ERROR` and is not removed as an empty item.
+- A `..` segment is a part between two `/` characters that is exactly `..`. For example, `..foo/a` does not contain a `..` segment.
+- For the optional inputs `terms`, `paths` and `issueKey`, a missing value, `null` and `""` all mean "not supplied". A value that is not a string gives `ERROR`.
+- Remove spaces at the start and end of `summary` before the length check. Use the result in the plan. Do not remove spaces from `issueKey`. Thus `proj-42` and ` PROJ-42` give `ERROR`.
+- A character count is the JavaScript string length (`.length`). This is the same count that UI Kit text fields use for `maxLength`.
 
 Procedure:
 
@@ -384,13 +404,22 @@ Field rules:
 | `sourceUrl` | string | Optional. Must start with `https://`. |
 | `version` | integer | Starts at 1. Add 1 for each change. |
 | `updatedBy` | account ID | Decision Guard sets it. |
-| `updatedAt` | timestamp | Decision Guard sets it. |
+| `updatedAt` | timestamp | Decision Guard sets it. ISO 8601 string, for example `2026-11-27T11:43:13.055Z`. |
 
 Rules:
 
 - A decision record must have one or more terms or one or more paths.
 - Use the same normalization and path rules as `check_plan` (sections 8.2 and 9.1). Thus a decision record that the admin page accepts always works with `check_plan`.
 - Do not delete a decision record. Retire it.
+
+Admin input (create and edit):
+
+- The admin supplies `title`, `statement`, `terms`, `paths` and `sourceUrl`. Decision Guard sets `id`, `status`, `version`, `updatedBy` and `updatedAt`. Retire is a different action.
+- `terms` and `paths` are comma-separated strings, the same as in `check_plan`.
+- Remove spaces at the start and end of `title` and `statement` before the length check. Store the result.
+- `terms`, `paths` and `sourceUrl` are optional. A missing value, `null` and `""` all mean "not supplied".
+- There is no raw string length limit for `terms` and `paths`. Only admins can write decision records (HR-5).
+- Return only the first error. Check in this sequence: `title`, `statement`, `terms`, `paths`, `sourceUrl`, then the rule "one or more terms or paths". Inside `terms` and `paths`, use the sequence in section 9.1.
 
 ### 10.2 Check log entry
 
