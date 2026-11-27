@@ -3,7 +3,7 @@
 | Item | Value |
 |---|---|
 | Document | Decision Guard MVP product requirements |
-| Version | 0.4.3 (MVP, in build) |
+| Version | 0.4.4 (MVP, in build) |
 | Date | 27 Nov 2026 |
 | Writing standard | ASD-STE100 Simplified Technical English |
 | Hackathon | Codegeist 2026 |
@@ -15,6 +15,15 @@
 | Project tracking | Linear |
 | Code review | Greptile, on each pull request |
 | Replaces | Versions 0.2 and 0.3, and `spike-notes-2026-11-26.md` |
+
+### Changes from version 0.4.3
+
+Task B4 closed these gaps in `list_decisions`.
+
+- Output when there are no active decision records (section 9.4).
+- Output when the decision records cannot be read (section 9.4).
+- `list_decisions` writes no check log entry (section 9.2).
+- An action with no inputs is valid (F24).
 
 ### Changes from version 0.4.2
 
@@ -322,7 +331,9 @@ If a failure occurs in steps 2 to 5, the verdict is `ERROR` (HR-1). Do step 6.
 | Use | The agent reads all active decision records before it makes a plan. |
 | Inputs | None |
 
-Output: all active decision records, sorted by ID number (section 9.4).
+Output: all active decision records, sorted by ID number (section 9.4). Retired decision records are not in the output.
+
+`list_decisions` does not write a check log entry. The check log is for `check_plan` only.
 
 ### 9.3 Rovo agent
 
@@ -407,6 +418,16 @@ Field rules:
 | `log` | `OK`, or `FAILED` if the log write failed (HR-7). |
 | `checkId` | The ID of the check log entry. `null` if the log write failed (`log` is `FAILED`). |
 | `error.reason` | For input that is not valid: the validation reason (section 9.1). For an internal failure: always "Internal error. The plan was not checked." Write the details to the Forge logs only. |
+
+`list_decisions` output:
+
+| Case | Fields after `tool` | `nextStep` text |
+|---|---|---|
+| One or more active decision records | `decisions`, `notice`, `nextStep` | Make a plan that obeys these decisions. Call check plan before you write code. |
+| No active decision records | `decisions` (empty list), `nextStep` | No decision records exist. Tell the user that plans cannot be checked. |
+| Failure (decision records cannot be read) | `error`, `nextStep`. No `decisions` field. | The decisions could not be read. Tell the user. Call check plan before you write code. |
+
+For a failure, `error.reason` is always "Internal error. The decisions were not read." The output has no `decisions` field, so an agent cannot read a failure as "no decisions" (HR-1). In each item of `decisions`, `sourceUrl` is present only if the decision record has one.
 
 `nextStep` for each verdict:
 
@@ -706,6 +727,7 @@ Use end-to-end tests only. Each test uses the installed app.
 | F21 | Keys: maximum 500 characters; regex `/^(?!\s+$)[a-zA-Z0-9:._\s-#]+$/`. Values: maximum 240 KiB. `keyPolicy: 'FAIL_IF_EXISTS'` does not overwrite a key that exists. The documentation does not give the error for this case. |
 | F22 | The Forge bundler compiles TypeScript with `tsconfig.json`. If `tsconfig.json` sets `noEmit: true`, `forge deploy` fails with "TypeScript emitted no output". Give `--noEmit` only on the command line (`npx tsc --noEmit`). |
 | F23 | An action `description` can have 255 characters maximum (`forge lint`). A handler path into a subfolder of `src`, for example `actions/check-plan.handler`, works. |
+| F24 | An action with no `inputs` is valid (`forge lint` and `forge deploy`, for `list-decisions`). |
 
 ## 16 Decision gate
 
