@@ -35,8 +35,45 @@ export type CheckPlanOutput = {
   log: "OK" | "FAILED";
 };
 
-// Other tools add their output type to this union.
-export type ToolOutput = CheckPlanOutput;
+// One decision record in list_decisions output. Decision text goes only in decisionText (HR-6).
+export type OutputDecision = {
+  decisionId: string;
+  decisionVersion: number;
+  title: string;
+  terms: string[];
+  paths: string[];
+  sourceUrl?: string;
+  decisionText: string;
+};
+
+export type ListDecisionsOutput = {
+  tool: "list_decisions";
+  // Undefined if the decisions could not be read. Then errorReason is set.
+  decisions?: OutputDecision[];
+  errorReason?: string;
+};
+
+export type ToolOutput = CheckPlanOutput | ListDecisionsOutput;
+
+// Fixed nextStep texts for list_decisions (PRD 9.4).
+const LIST_NEXT_STEP = {
+  decisions: "Make a plan that obeys these decisions. Call check plan before you write code.",
+  empty: "No decision records exist. Tell the user that plans cannot be checked.",
+  error: "The decisions could not be read. Tell the user. Call check plan before you write code.",
+};
+
+// Field order: sourceUrl before decisionText, as in the PRD example.
+export function toOutputDecision(record: DecisionRecord): OutputDecision {
+  return {
+    decisionId: record.id,
+    decisionVersion: record.version,
+    title: record.title,
+    terms: record.terms,
+    paths: record.paths,
+    ...(record.sourceUrl !== undefined ? { sourceUrl: record.sourceUrl } : {}),
+    decisionText: record.statement,
+  };
+}
 
 // Adds the record fields that the agent needs to a match.
 export function toOutputMatch(match: Match, record: DecisionRecord): OutputMatch {
@@ -53,12 +90,8 @@ export function toOutputMatch(match: Match, record: DecisionRecord): OutputMatch
   return output;
 }
 
-// The one shared output function. Field order follows the PRD 9.4 examples.
-export function buildOutput(output: ToolOutput): string {
+function checkPlanFields(output: CheckPlanOutput): Record<string, unknown> {
   const result: Record<string, unknown> = {
-    format: "DECISION_GUARD_RESULT",
-    formatVersion: 1,
-    tool: output.tool,
     verdict: output.verdict,
     checkId: output.checkId,
     matches: output.matches.map((match) => {
@@ -75,5 +108,30 @@ export function buildOutput(output: ToolOutput): string {
   }
   result.nextStep = CHECK_PLAN_NEXT_STEP[output.verdict];
   result.log = output.log;
-  return JSON.stringify(result);
+  return result;
+}
+
+function listDecisionsFields(output: ListDecisionsOutput): Record<string, unknown> {
+  if (output.decisions === undefined) {
+    // No decisions field: an agent must not read a failure as "no decisions" (HR-1).
+    return {
+      error: { reason: output.errorReason ?? "Unknown error." },
+      nextStep: LIST_NEXT_STEP.error,
+    };
+  }
+  if (output.decisions.length === 0) {
+    return { decisions: [], nextStep: LIST_NEXT_STEP.empty };
+  }
+  return { decisions: output.decisions, notice: NOTICE, nextStep: LIST_NEXT_STEP.decisions };
+}
+
+// The one shared output function for all tools. Field order follows the PRD 9.4 examples.
+export function buildOutput(output: ToolOutput): string {
+  const fields = output.tool === "check_plan" ? checkPlanFields(output) : listDecisionsFields(output);
+  return JSON.stringify({
+    format: "DECISION_GUARD_RESULT",
+    formatVersion: 1,
+    tool: output.tool,
+    ...fields,
+  });
 }
