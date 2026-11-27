@@ -87,6 +87,21 @@ function buildRecord(
   return record;
 }
 
+function sameRecord(a: DecisionRecord, b: DecisionRecord): boolean {
+  return (
+    a.id === b.id &&
+    a.title === b.title &&
+    a.statement === b.statement &&
+    a.terms.join("\n") === b.terms.join("\n") &&
+    a.paths.join("\n") === b.paths.join("\n") &&
+    a.status === b.status &&
+    a.sourceUrl === b.sourceUrl &&
+    a.version === b.version &&
+    a.updatedBy === b.updatedBy &&
+    a.updatedAt === b.updatedAt
+  );
+}
+
 // All decision records, active and retired, sorted by ID number.
 export async function listDecisions(): Promise<DecisionRecord[]> {
   const items = await listByPrefix(RECORD_PREFIX);
@@ -119,11 +134,9 @@ export async function createDecision(
     existing.reduce((highest, record) => Math.max(highest, decisionIdNumber(record.id) ?? 0), 0) + 1;
   for (let attempt = 0; attempt < MAX_CREATE_ATTEMPTS; attempt += 1) {
     const record = buildRecord(`DG-${next}`, input, "active", 1, accountId);
-    const written = await setIfAbsent(
-      keyFor(record.id),
-      record,
-      (stored) =>
-        isObject(stored) && stored.updatedAt === record.updatedAt && stored.updatedBy === accountId,
+    // A record with the same ID from another write differs in one or more fields.
+    const written = await setIfAbsent(keyFor(record.id), record, (stored) =>
+      sameRecord(parseDecision(stored, keyFor(record.id)), record),
     );
     if (written) {
       return record;
@@ -133,28 +146,67 @@ export async function createDecision(
   throw new Error("Could not find a free decision record ID.");
 }
 
+// A claim older than this is stale: its write can no longer be in progress. The longest Forge
+// function timeout is 15 minutes; 20 minutes gives a margin.
+const STALE_CLAIM_MS = 20 * 60 * 1000;
+
+type Claim = { token: string; claimedAt: string };
+
+function isStaleClaim(value: unknown): value is Claim {
+  return (
+    isObject(value) &&
+    typeof value.token === "string" &&
+    typeof value.claimedAt === "string" &&
+    Date.now() - Date.parse(value.claimedAt) > STALE_CLAIM_MS
+  );
+}
+
+// Claims the version of the record. Returns false if another write has the claim.
+// A failure at any step can leave a claim with no write. Such a claim becomes stale, and
+// a later write takes it over. Thus a failure blocks changes to a record for 20 minutes or less.
+async function claimVersion(record: DecisionRecord, claimKey: string): Promise<boolean> {
+  const claim: Claim = { token: randomString(12), claimedAt: new Date().toISOString() };
+  const isOurs = (stored: unknown): boolean => isObject(stored) && stored.token === claim.token;
+  if (await setIfAbsent(claimKey, claim, isOurs)) {
+    return true;
+  }
+  const existing = await kvs.get<unknown>(claimKey);
+  if (!isStaleClaim(existing)) {
+    return false;
+  }
+  // The claim was used if the record has its version. Then this write is late.
+  const latest = await getDecision(record.id);
+  if (latest === undefined || latest.version !== record.version - 1) {
+    return false;
+  }
+  // Only one write can take over a stale claim: the key of the takeover contains its token.
+  if (!(await setIfAbsent(`${claimKey}:${existing.token}`, claim, isOurs))) {
+    return false;
+  }
+  await kvs.set(claimKey, claim);
+  return true;
+}
+
 // Writes the next version of a record, but only if no other write claimed that version.
 // Returns false if another write claimed it first.
 async function writeNextVersion(record: DecisionRecord): Promise<boolean> {
   const claimKey = `${CLAIM_PREFIX}${record.id}:${record.version}`;
-  const token = randomString(12);
-  const claimed = await setIfAbsent(
-    claimKey,
-    { token, claimedAt: record.updatedAt },
-    (stored) => isObject(stored) && stored.token === token,
-  );
-  if (!claimed) {
+  if (!(await claimVersion(record, claimKey))) {
     return false;
   }
   try {
     await kvs.set(keyFor(record.id), record);
   } catch (error: unknown) {
-    // The record did not change. Remove the claim so that a later edit can use this version.
-    // If the removal also fails, edits of this record give the "changed" error until
-    // the claim key is removed.
-    await kvs.delete(claimKey).catch((deleteError: unknown) => {
-      console.warn(`Could not remove the claim ${claimKey}.`, deleteError);
-    });
+    // Remove the claim only if a strictly consistent read shows the old version. Then a new
+    // edit can start at once. Otherwise the claim becomes stale and is taken over later.
+    try {
+      const latest = await getDecision(record.id);
+      if (latest !== undefined && latest.version === record.version - 1) {
+        await kvs.delete(claimKey);
+      }
+    } catch (cleanupError: unknown) {
+      console.warn(`Could not remove the claim ${claimKey}.`, cleanupError);
+    }
     throw error;
   }
   return true;

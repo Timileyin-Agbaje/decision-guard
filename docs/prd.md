@@ -22,7 +22,7 @@ Task B2 closed these storage gaps.
 
 - Decision record IDs: the highest existing number + 1, written with `FAIL_IF_EXISTS` (section 10.3).
 - A retired decision record cannot be edited or retired again (section 10.3).
-- When two admins change the same decision record at the same time, only one change is written. The other admin gets an error (section 10.3).
+- When two admins change the same decision record at the same time, only one change is written. The other admin gets an error. A failed change blocks the record for 20 minutes or less (section 10.3).
 - A stored value with a bad shape causes an error, not `CLEAR` (section 10.3).
 - Check log entry ID: the date is in UTC. The 4 random characters are from `a` to `z` and `0` to `9` (section 10.2).
 - Old check log entries are removed after each write. A new entry never replaces an entry with the same ID (section 10.2).
@@ -466,8 +466,11 @@ Keep the last 50 check log entries. Delete older entries.
 - New decision record ID: the highest existing ID number + 1. Write the record with `keyPolicy: 'FAIL_IF_EXISTS'`. If the ID exists, try the next number, up to 5 times. Decision records are never deleted, so an ID is never used again.
 - Edit and retire: add 1 to `version`. Set `updatedBy` and `updatedAt`. A retired decision record cannot be edited or retired again.
 - Before an edit or retire writes version N, claim the key `decision:v:<id>:<N>` with `keyPolicy: 'FAIL_IF_EXISTS'`. Only one write can claim a version. If the claim fails, write nothing and return the error "Decision record <id> was changed by another admin. Load it again, then try again." Thus two admins cannot both write version N, and an edit cannot undo a retire.
-- If the record write fails after the claim, delete the claim. If that delete also fails, all edits of the record give the "changed" error until the claim key is removed.
+- A failure at any step can leave a claim with no record write. Such a claim is stale when it is older than 20 minutes and the record still has the old version. The longest Forge function timeout is 15 minutes, so the write of a stale claim cannot be in progress.
+- To take over a stale claim, first claim the key `decision:v:<id>:<N>:<token of the stale claim>` with `FAIL_IF_EXISTS`. Only one write can take over a stale claim. Then replace the stale claim with the new claim. Thus a failure blocks changes to one decision record for 20 minutes or less.
+- If the record write fails, and a strictly consistent read shows the old version, delete the claim. Then a new edit can start at once.
 - Do not delete claim keys after a successful write. An admin who read the old version must still find the claim.
+- To confirm that a `FAIL_IF_EXISTS` write was this write, compare the stored value with all fields of the written value (F21).
 - Check the shape of each stored value when you read it. If the shape is not correct, cause an error. A check then gives `ERROR`, not `CLEAR` (HR-1).
 
 **NOTE:** Verify the query and limit functions of `@forge/kvs` in the Forge documentation before you write the storage code.
