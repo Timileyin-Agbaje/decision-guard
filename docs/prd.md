@@ -22,10 +22,10 @@ Task B2 closed these storage gaps.
 
 - Decision record IDs: the highest existing number + 1, written with `FAIL_IF_EXISTS` (section 10.3).
 - A retired decision record cannot be edited or retired again (section 10.3).
-- When two admins edit the same decision record at the same time, the last write wins (section 10.3).
+- When two admins change the same decision record at the same time, only one change is written. The other admin gets an error (section 10.3).
 - A stored value with a bad shape causes an error, not `CLEAR` (section 10.3).
 - Check log entry ID: the date is in UTC. The 4 random characters are from `a` to `z` and `0` to `9` (section 10.2).
-- Old check log entries are removed after each write (section 10.2).
+- Old check log entries are removed after each write. A new entry never replaces an entry with the same ID (section 10.2).
 - Platform facts for `@forge/kvs`, from the Forge documentation (section 15.4, F18 to F21).
 
 ### Changes from version 0.4
@@ -449,6 +449,7 @@ Admin input (create and edit):
 Keep the last 50 check log entries. Delete older entries.
 
 - The date in `id` is the UTC date of `createdAt`. The 4 random characters are from `a` to `z` and `0` to `9`.
+- Write each entry with `keyPolicy: 'FAIL_IF_EXISTS'`. If two checks get the same ID, try a new ID, up to 5 times. Never replace an entry.
 - After each write, delete all entries except the newest 50. Newest means the latest `createdAt`; for the same `createdAt`, the highest `id`.
 - If the delete fails, the entry is still written. Do not set `log` to `FAILED` (HR-7 is about the write only).
 - The query is eventually consistent (F20). Thus, for a short time, there can be more than 50 entries. The next write removes them.
@@ -460,10 +461,13 @@ Keep the last 50 check log entries. Delete older entries.
 - Store each check log entry under its own key.
 - Use key prefixes, for example `decision:` and `check:`.
 - Keys: `decision:<id>`, for example `decision:DG-3`, and `check:<id>`, for example `check:CHK-20261127-a1b2`.
+- Version claim keys: `decision:v:<id>:<version>`, for example `decision:v:DG-3:2`. A list of decision records reads only keys that start with `decision:DG-`. Thus the claim keys do not make a check slower.
 - All `@forge/kvs` access is in `src/storage/`. Read all keys with one prefix page by page, with 50 items for each page (F18).
 - New decision record ID: the highest existing ID number + 1. Write the record with `keyPolicy: 'FAIL_IF_EXISTS'`. If the ID exists, try the next number, up to 5 times. Decision records are never deleted, so an ID is never used again.
 - Edit and retire: add 1 to `version`. Set `updatedBy` and `updatedAt`. A retired decision record cannot be edited or retired again.
-- If two admins edit the same decision record at the same time, the last write wins. Each write still adds 1 to `version`.
+- Before an edit or retire writes version N, claim the key `decision:v:<id>:<N>` with `keyPolicy: 'FAIL_IF_EXISTS'`. Only one write can claim a version. If the claim fails, write nothing and return the error "Decision record <id> was changed by another admin. Load it again, then try again." Thus two admins cannot both write version N, and an edit cannot undo a retire.
+- If the record write fails after the claim, delete the claim. If that delete also fails, all edits of the record give the "changed" error until the claim key is removed.
+- Do not delete claim keys after a successful write. An admin who read the old version must still find the claim.
 - Check the shape of each stored value when you read it. If the shape is not correct, cause an error. A check then gives `ERROR`, not `CLEAR` (HR-1).
 
 **NOTE:** Verify the query and limit functions of `@forge/kvs` in the Forge documentation before you write the storage code.

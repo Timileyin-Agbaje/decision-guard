@@ -1,17 +1,28 @@
 // Storage for decision records (PRD 10.1 and 10.3). Key: "decision:<id>", for example decision:DG-3.
 // Decision records are never deleted. Retire them.
+//
+// Version claims: before an edit or retire writes version N, it claims the key
+// "decision:v:<id>:<N>" with FAIL_IF_EXISTS. Only one write can claim a version. Thus two
+// admins cannot both write version N, and an edit cannot undo a retire.
 
 import { kvs } from "@forge/kvs";
 import { compareDecisionIds, decisionIdNumber } from "../core/ids";
 import type { Result } from "../core/result";
 import type { DecisionInput, DecisionRecord } from "../core/types";
-import { isObject, isStringList, listByPrefix } from "./query";
+import { isObject, isStringList, listByPrefix, randomString, setIfAbsent } from "./query";
 
 const PREFIX = "decision:";
+// All record keys start with this. Claim keys ("decision:v:") do not, so a list does not read them.
+const RECORD_PREFIX = `${PREFIX}DG-`;
+const CLAIM_PREFIX = `${PREFIX}v:`;
 const MAX_CREATE_ATTEMPTS = 5;
 
 function keyFor(id: string): string {
   return `${PREFIX}${id}`;
+}
+
+function changedReason(id: string): string {
+  return `Decision record ${id} was changed by another admin. Load it again, then try again.`;
 }
 
 // Checks the shape of a stored value. A bad value causes an error, so that a check fails
@@ -78,7 +89,7 @@ function buildRecord(
 
 // All decision records, active and retired, sorted by ID number.
 export async function listDecisions(): Promise<DecisionRecord[]> {
-  const items = await listByPrefix(PREFIX);
+  const items = await listByPrefix(RECORD_PREFIX);
   return items
     .map((item) => parseDecision(item.value, item.key))
     .sort((a, b) => compareDecisionIds(a.id, b.id));
@@ -108,21 +119,13 @@ export async function createDecision(
     existing.reduce((highest, record) => Math.max(highest, decisionIdNumber(record.id) ?? 0), 0) + 1;
   for (let attempt = 0; attempt < MAX_CREATE_ATTEMPTS; attempt += 1) {
     const record = buildRecord(`DG-${next}`, input, "active", 1, accountId);
-    const key = keyFor(record.id);
-    try {
-      await kvs.set(key, record, { keyPolicy: "FAIL_IF_EXISTS" });
-    } catch (error: unknown) {
-      // The docs do not give the error for an existing key. Read the key to find out.
-      if ((await kvs.get<unknown>(key)) === undefined) {
-        throw error;
-      }
-      next += 1;
-      continue;
-    }
-    // The docs do not say if FAIL_IF_EXISTS fails or ignores the write. Make sure that the
-    // stored record is this one.
-    const stored = await getDecision(record.id);
-    if (stored !== undefined && stored.updatedAt === record.updatedAt && stored.updatedBy === accountId) {
+    const written = await setIfAbsent(
+      keyFor(record.id),
+      record,
+      (stored) =>
+        isObject(stored) && stored.updatedAt === record.updatedAt && stored.updatedBy === accountId,
+    );
+    if (written) {
       return record;
     }
     next += 1;
@@ -130,8 +133,35 @@ export async function createDecision(
   throw new Error("Could not find a free decision record ID.");
 }
 
+// Writes the next version of a record, but only if no other write claimed that version.
+// Returns false if another write claimed it first.
+async function writeNextVersion(record: DecisionRecord): Promise<boolean> {
+  const claimKey = `${CLAIM_PREFIX}${record.id}:${record.version}`;
+  const token = randomString(12);
+  const claimed = await setIfAbsent(
+    claimKey,
+    { token, claimedAt: record.updatedAt },
+    (stored) => isObject(stored) && stored.token === token,
+  );
+  if (!claimed) {
+    return false;
+  }
+  try {
+    await kvs.set(keyFor(record.id), record);
+  } catch (error: unknown) {
+    // The record did not change. Remove the claim so that a later edit can use this version.
+    // If the removal also fails, edits of this record give the "changed" error until
+    // the claim key is removed.
+    await kvs.delete(claimKey).catch((deleteError: unknown) => {
+      console.warn(`Could not remove the claim ${claimKey}.`, deleteError);
+    });
+    throw error;
+  }
+  return true;
+}
+
 // Replaces the admin fields of an active record. Adds 1 to the version.
-// Two admins who edit at the same time: the last write wins.
+// If another admin changed the record at the same time, returns an error and writes nothing.
 export async function updateDecision(
   id: string,
   input: DecisionInput,
@@ -145,7 +175,9 @@ export async function updateDecision(
     return { ok: false, reason: `Decision record ${id} is retired. It cannot be changed.` };
   }
   const record = buildRecord(id, input, "active", current.version + 1, accountId);
-  await kvs.set(keyFor(id), record);
+  if (!(await writeNextVersion(record))) {
+    return { ok: false, reason: changedReason(id) };
+  }
   return { ok: true, value: record };
 }
 
@@ -159,6 +191,8 @@ export async function retireDecision(id: string, accountId: string): Promise<Res
     return { ok: false, reason: `Decision record ${id} is already retired.` };
   }
   const record = buildRecord(id, current, "retired", current.version + 1, accountId);
-  await kvs.set(keyFor(id), record);
+  if (!(await writeNextVersion(record))) {
+    return { ok: false, reason: changedReason(id) };
+  }
   return { ok: true, value: record };
 }

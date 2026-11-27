@@ -3,11 +3,11 @@
 
 import { kvs } from "@forge/kvs";
 import type { CheckLogEntry, Verdict } from "../core/types";
-import { isObject, isStringList, listByPrefix } from "./query";
+import { isObject, isStringList, listByPrefix, randomString, setIfAbsent } from "./query";
 
 const PREFIX = "check:";
 const KEEP = 50;
-const ID_CHARACTERS = "abcdefghijklmnopqrstuvwxyz0123456789";
+const MAX_WRITE_ATTEMPTS = 5;
 const VERDICTS: readonly Verdict[] = ["CONFLICT", "CLEAR", "NO_RECORDS", "ERROR"];
 
 export type NewCheckLogEntry = Omit<CheckLogEntry, "id" | "createdAt">;
@@ -75,9 +75,7 @@ function compareNewestFirst(a: CheckLogEntry, b: CheckLogEntry): number {
 // "CHK-" + UTC date + "-" + 4 random characters, for example CHK-20261127-a1b2.
 function makeCheckId(now: Date): string {
   const date = now.toISOString().slice(0, 10).replace(/-/g, "");
-  const bytes = crypto.getRandomValues(new Uint8Array(4));
-  const suffix = Array.from(bytes, (byte) => ID_CHARACTERS[byte % ID_CHARACTERS.length]).join("");
-  return `CHK-${date}-${suffix}`;
+  return `CHK-${date}-${randomString(4)}`;
 }
 
 async function listAllEntries(): Promise<CheckLogEntry[]> {
@@ -96,19 +94,34 @@ async function pruneCheckLog(): Promise<void> {
 
 // Writes one entry, then removes old entries. An error in the write goes to the caller,
 // which sets log to FAILED (HR-7). An error in the removal does not: the entry is written.
+// Two checks can get the same ID. The write never replaces an entry: it tries a new ID.
 export async function writeCheckLog(newEntry: NewCheckLogEntry): Promise<CheckLogEntry> {
-  const now = new Date();
-  const entry: CheckLogEntry = { ...newEntry, id: makeCheckId(now), createdAt: now.toISOString() };
-  if (entry.issueKey === undefined) {
-    delete entry.issueKey;
+  for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
+    const now = new Date();
+    const entry: CheckLogEntry = { ...newEntry, id: makeCheckId(now), createdAt: now.toISOString() };
+    if (entry.issueKey === undefined) {
+      delete entry.issueKey;
+    }
+    const written = await setIfAbsent(
+      `${PREFIX}${entry.id}`,
+      entry,
+      (stored) =>
+        isObject(stored) &&
+        stored.createdAt === entry.createdAt &&
+        stored.invokedBy === entry.invokedBy &&
+        stored.summary === entry.summary,
+    );
+    if (!written) {
+      continue;
+    }
+    try {
+      await pruneCheckLog();
+    } catch (error: unknown) {
+      console.warn("Could not remove old check log entries.", error);
+    }
+    return entry;
   }
-  await kvs.set(`${PREFIX}${entry.id}`, entry);
-  try {
-    await pruneCheckLog();
-  } catch (error: unknown) {
-    console.warn("Could not remove old check log entries.", error);
-  }
-  return entry;
+  throw new Error("Could not find a free check log ID.");
 }
 
 // The last 50 entries, newest first.
